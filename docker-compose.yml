@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: tipcurrent-postgres
+    environment:
+      POSTGRES_DB: tipcurrent
+      POSTGRES_USER: tipcurrent
+      POSTGRES_PASSWORD: tipcurrent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tipcurrent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
