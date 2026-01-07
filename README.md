@@ -33,14 +33,26 @@ This starts a PostgreSQL 17 container with the database pre-configured.
 
 ### 2. Build the Application
 
+On macOS/Linux:
 ```bash
-mvn clean package
+./mvnw clean package
+```
+
+On Windows:
+```bash
+mvnw.cmd clean package
 ```
 
 ### 3. Run the Application
 
+On macOS/Linux:
 ```bash
-mvn spring-boot:run
+./mvnw spring-boot:run
+```
+
+On Windows:
+```bash
+mvnw.cmd spring-boot:run
 ```
 
 The service will start on `http://localhost:8080`.
@@ -94,12 +106,133 @@ Expected response:
 
 **Response:** HTTP 201 Created with the persisted tip including generated ID and timestamp.
 
+### List Tips
+
+**Endpoint:** `GET /api/tips`
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| roomId | string | No | Filter tips by room ID |
+| senderId | string | No | Filter tips by sender ID |
+| recipientId | string | No | Filter tips by recipient ID |
+| page | integer | No | Page number (default: 0) |
+| size | integer | No | Page size (default: 20, max: 100) |
+
+**Response:** HTTP 200 OK with paginated list of tips, sorted by createdAt (newest first).
+
+**Examples:**
+
+Get all tips (paginated):
+```bash
+curl http://localhost:8080/api/tips
+```
+
+Get tips for a specific room:
+```bash
+curl http://localhost:8080/api/tips?roomId=gaming_stream_123
+```
+
+Get tips received by a user:
+```bash
+curl http://localhost:8080/api/tips?recipientId=bob
+```
+
+Get tips with pagination:
+```bash
+curl http://localhost:8080/api/tips?page=0&size=10
+```
+
+Combine filters:
+```bash
+curl http://localhost:8080/api/tips?roomId=gaming_stream_123&recipientId=bob
+```
+
+**Response Format:**
+
+```json
+{
+  "content": [
+    {
+      "id": 2,
+      "roomId": "gaming_stream_123",
+      "senderId": "charlie",
+      "recipientId": "bob",
+      "amount": 200.00,
+      "message": "Amazing!",
+      "metadata": null,
+      "createdAt": "2024-01-15T10:35:00.000Z"
+    },
+    {
+      "id": 1,
+      "roomId": "gaming_stream_123",
+      "senderId": "alice",
+      "recipientId": "bob",
+      "amount": 100.00,
+      "message": "Great play!",
+      "metadata": "{\"type\":\"celebration\"}",
+      "createdAt": "2024-01-15T10:30:45.123Z"
+    }
+  ],
+  "pageable": {
+    "pageNumber": 0,
+    "pageSize": 20
+  },
+  "totalElements": 2,
+  "totalPages": 1,
+  "last": true,
+  "first": true
+}
+```
+
+### Get Tip by ID
+
+**Endpoint:** `GET /api/tips/{id}`
+
+**Path Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| id | long | Yes | The tip ID |
+
+**Response:** HTTP 200 OK with the tip details, or HTTP 404 Not Found if the tip doesn't exist.
+
+**Example:**
+
+```bash
+curl http://localhost:8080/api/tips/1
+```
+
+**Response:**
+
+```json
+{
+  "id": 1,
+  "roomId": "gaming_stream_123",
+  "senderId": "alice",
+  "recipientId": "bob",
+  "amount": 100.00,
+  "message": "Great play!",
+  "metadata": "{\"type\":\"celebration\"}",
+  "createdAt": "2024-01-15T10:30:45.123Z"
+}
+```
+
 ## Running Tests
 
 ### Unit and Integration Tests
 
+**Note:** Integration tests require Docker to be running for Testcontainers.
+
+On macOS/Linux:
 ```bash
-mvn test
+./mvnw test
+```
+
+On Windows:
+```bash
+mvnw.cmd test
 ```
 
 The integration tests use Testcontainers to spin up a real PostgreSQL instance, ensuring tests run against the actual database.
@@ -108,8 +241,21 @@ The integration tests use Testcontainers to spin up a real PostgreSQL instance, 
 
 You can use the included Docker Compose setup to test manually:
 
-1. Start PostgreSQL: `docker-compose up -d`
-2. Run the application: `mvn spring-boot:run`
+1. Start PostgreSQL:
+   ```bash
+   docker-compose up -d
+   ```
+
+2. Run the application (macOS/Linux):
+   ```bash
+   ./mvnw spring-boot:run
+   ```
+
+   Or on Windows:
+   ```bash
+   mvnw.cmd spring-boot:run
+   ```
+
 3. Send requests using curl, Postman, or your preferred HTTP client
 
 ## Database Schema

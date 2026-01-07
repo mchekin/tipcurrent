@@ -1,6 +1,5 @@
 package com.mchekin.tipcurrent;
 
-import com.mchekin.tipcurrent.TipcurrentApplication;
 import com.mchekin.tipcurrent.domain.Tip;
 import com.mchekin.tipcurrent.dto.CreateTipRequest;
 import com.mchekin.tipcurrent.dto.TipResponse;
@@ -120,6 +119,136 @@ class TipIntegrationTest {
         assertThat(tipResponse.getMessage()).isNull();
         assertThat(tipResponse.getMetadata()).isNull();
         assertThat(tipResponse.getAmount()).isEqualByComparingTo(new BigDecimal("50.00"));
+    }
+
+    @Test
+    void shouldGetAllTips() {
+        createTestTip("room1", "alice", "bob", new BigDecimal("100"));
+        createTestTip("room1", "charlie", "bob", new BigDecimal("200"));
+        createTestTip("room2", "alice", "david", new BigDecimal("50"));
+
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                createUrl("/api/tips"),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("alice");
+        assertThat(response.getBody()).contains("bob");
+        assertThat(response.getBody()).contains("charlie");
+    }
+
+    @Test
+    void shouldGetTipsByRoomId() {
+        createTestTip("room1", "alice", "bob", new BigDecimal("100"));
+        createTestTip("room1", "charlie", "bob", new BigDecimal("200"));
+        createTestTip("room2", "alice", "david", new BigDecimal("50"));
+
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                createUrl("/api/tips?roomId=room1"),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("room1");
+        assertThat(response.getBody()).doesNotContain("room2");
+    }
+
+    @Test
+    void shouldGetTipsByRecipientId() {
+        createTestTip("room1", "alice", "bob", new BigDecimal("100"));
+        createTestTip("room1", "charlie", "bob", new BigDecimal("200"));
+        createTestTip("room2", "alice", "david", new BigDecimal("50"));
+
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                createUrl("/api/tips?recipientId=bob"),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"recipientId\":\"bob\"");
+        assertThat(response.getBody()).doesNotContain("david");
+    }
+
+    @Test
+    void shouldGetTipsBySenderId() {
+        createTestTip("room1", "alice", "bob", new BigDecimal("100"));
+        createTestTip("room1", "charlie", "bob", new BigDecimal("200"));
+        createTestTip("room2", "alice", "david", new BigDecimal("50"));
+
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                createUrl("/api/tips?senderId=alice"),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"senderId\":\"alice\"");
+        assertThat(response.getBody()).doesNotContain("charlie");
+    }
+
+    @Test
+    void shouldGetTipById() {
+        TipResponse created = createTestTip("room1", "alice", "bob", new BigDecimal("100"));
+
+        ResponseEntity<TipResponse> response = restTemplate.getForEntity(
+                createUrl("/api/tips/" + created.getId()),
+                TipResponse.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getId()).isEqualTo(created.getId());
+        assertThat(response.getBody().getRoomId()).isEqualTo("room1");
+        assertThat(response.getBody().getSenderId()).isEqualTo("alice");
+    }
+
+    @Test
+    void shouldReturn404WhenTipNotFound() {
+        ResponseEntity<TipResponse> response = restTemplate.getForEntity(
+                createUrl("/api/tips/99999"),
+                TipResponse.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void shouldSortTipsByCreatedAtDesc() {
+        TipResponse tip1 = createTestTip("room1", "alice", "bob", new BigDecimal("100"));
+        try {
+            Thread.sleep(10);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        TipResponse tip2 = createTestTip("room1", "charlie", "bob", new BigDecimal("200"));
+
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                createUrl("/api/tips?roomId=room1"),
+                String.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String body = response.getBody();
+        int tip2Position = body.indexOf("\"id\":" + tip2.getId());
+        int tip1Position = body.indexOf("\"id\":" + tip1.getId());
+        assertThat(tip2Position).isLessThan(tip1Position);
+    }
+
+    private TipResponse createTestTip(String roomId, String senderId, String recipientId, BigDecimal amount) {
+        CreateTipRequest request = CreateTipRequest.builder()
+                .roomId(roomId)
+                .senderId(senderId)
+                .recipientId(recipientId)
+                .amount(amount)
+                .build();
+
+        ResponseEntity<TipResponse> response = restTemplate.postForEntity(
+                createUrl("/api/tips"),
+                request,
+                TipResponse.class
+        );
+
+        return response.getBody();
     }
 
     private String createUrl(String path) {

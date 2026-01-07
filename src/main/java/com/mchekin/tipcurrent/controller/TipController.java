@@ -5,12 +5,15 @@ import com.mchekin.tipcurrent.dto.CreateTipRequest;
 import com.mchekin.tipcurrent.dto.TipResponse;
 import com.mchekin.tipcurrent.repository.TipRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/tips")
@@ -44,5 +47,68 @@ public class TipController {
                 .build();
 
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @GetMapping
+    public ResponseEntity<Page<TipResponse>> getTips(
+            @RequestParam(required = false) String roomId,
+            @RequestParam(required = false) String recipientId,
+            @RequestParam(required = false) String senderId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        Page<Tip> tips;
+
+        if (roomId != null && recipientId != null) {
+            tips = tipRepository.findByRoomIdAndRecipientId(roomId, recipientId, pageable);
+        } else if (roomId != null && senderId != null) {
+            tips = tipRepository.findByRoomIdAndSenderId(roomId, senderId, pageable);
+        } else if (roomId != null) {
+            tips = tipRepository.findByRoomId(roomId, pageable);
+        } else if (recipientId != null) {
+            tips = tipRepository.findByRecipientId(recipientId, pageable);
+        } else if (senderId != null) {
+            tips = tipRepository.findBySenderId(senderId, pageable);
+        } else {
+            tips = tipRepository.findAll(pageable);
+        }
+
+        Page<TipResponse> response = tips.map(tip -> TipResponse.builder()
+                .id(tip.getId())
+                .roomId(tip.getRoomId())
+                .senderId(tip.getSenderId())
+                .recipientId(tip.getRecipientId())
+                .amount(tip.getAmount())
+                .message(tip.getMessage())
+                .metadata(tip.getMetadata())
+                .createdAt(tip.getCreatedAt())
+                .build()
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<TipResponse> getTipById(@PathVariable Long id) {
+        Optional<Tip> tip = tipRepository.findById(id);
+
+        if (tip.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        TipResponse response = TipResponse.builder()
+                .id(tip.get().getId())
+                .roomId(tip.get().getRoomId())
+                .senderId(tip.get().getSenderId())
+                .recipientId(tip.get().getRecipientId())
+                .amount(tip.get().getAmount())
+                .message(tip.get().getMessage())
+                .metadata(tip.get().getMetadata())
+                .createdAt(tip.get().getCreatedAt())
+                .build();
+
+        return ResponseEntity.ok(response);
     }
 }
