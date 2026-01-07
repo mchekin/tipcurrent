@@ -321,7 +321,7 @@ Future iterations may include:
 
 ## License
 
-Open source - specific license TBD.
+MIT License
 
 ## Contributing
 
