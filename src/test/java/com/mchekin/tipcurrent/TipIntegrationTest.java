@@ -265,6 +265,7 @@ class TipIntegrationTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation") // MappingJackson2MessageConverter deprecated but no replacement yet in Spring Boot 4.0.1
     void shouldBroadcastTipViaWebSocket() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<TipResponse> receivedMessage = new AtomicReference<>();
