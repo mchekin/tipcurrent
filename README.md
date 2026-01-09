@@ -8,7 +8,8 @@ TipCurrent provides a reliable, self-hosted solution for ingesting and persistin
 
 ## Features
 
-- REST API for creating tip events
+- REST API for creating and querying tip events
+- Real-time WebSocket broadcasting for tip events
 - PostgreSQL persistence with proper indexing
 - Docker Compose for easy local development
 - Integration tests with Testcontainers
@@ -219,6 +220,109 @@ curl http://localhost:8080/api/tips/1
 }
 ```
 
+## Real-Time Updates via WebSocket
+
+TipCurrent provides real-time tip event broadcasting using WebSocket with STOMP protocol. 
+When a tip is created via the REST API, it's automatically broadcast to all WebSocket subscribers in the same room.
+
+### WebSocket Endpoint
+
+Connect to: `ws://localhost:8080/ws`
+
+### Subscription Pattern
+
+Subscribe to room-specific topics to receive tip events:
+
+**Topic:** `/topic/rooms/{roomId}`
+
+Where `{roomId}` is the room identifier (e.g., `gaming_stream_123`).
+
+### JavaScript Client Example
+
+```javascript
+// Using SockJS and STOMP.js
+const socket = new SockJS('http://localhost:8080/ws');
+const stompClient = Stomp.over(socket);
+
+stompClient.connect({}, function(frame) {
+    console.log('Connected: ' + frame);
+
+    // Subscribe to a specific room
+    stompClient.subscribe('/topic/rooms/gaming_stream_123', function(message) {
+        const tip = JSON.parse(message.body);
+        console.log('Received tip:', tip);
+        // Handle the tip event (update UI, play sound, etc.)
+    });
+});
+```
+
+### Message Format
+
+WebSocket messages contain the same TipResponse format as the REST API:
+
+```json
+{
+  "id": 1,
+  "roomId": "gaming_stream_123",
+  "senderId": "alice",
+  "recipientId": "bob",
+  "amount": 100.00,
+  "message": "Great play!",
+  "metadata": "{\"type\":\"celebration\"}",
+  "createdAt": "2024-01-15T10:30:45.123Z"
+}
+```
+
+### Use Cases
+
+- **Live Stream Overlays**: Display tips in real-time on stream
+- **Audience Engagement**: Show tip notifications to viewers
+- **Creator Dashboards**: Real-time revenue and tip tracking
+- **Moderation Tools**: Monitor tip activity across rooms
+
+### Example: Full Client Integration
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TipCurrent WebSocket Demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body>
+    <h1>Room: gaming_stream_123</h1>
+    <div id="tips"></div>
+
+    <script>
+        const socket = new SockJS('http://localhost:8080/ws');
+        const stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function(frame) {
+            console.log('Connected to TipCurrent');
+
+            stompClient.subscribe('/topic/rooms/gaming_stream_123', function(message) {
+                const tip = JSON.parse(message.body);
+                displayTip(tip);
+            });
+        });
+
+        function displayTip(tip) {
+            const tipsDiv = document.getElementById('tips');
+            const tipElement = document.createElement('div');
+            tipElement.innerHTML = `
+                <strong>${tip.senderId}</strong> tipped
+                <strong>${tip.recipientId}</strong>
+                ${tip.amount} tokens
+                ${tip.message ? ': ' + tip.message : ''}
+            `;
+            tipsDiv.prepend(tipElement);
+        }
+    </script>
+</body>
+</html>
+```
+
 ## Running Tests
 
 ### Unit and Integration Tests
@@ -277,6 +381,7 @@ The `tips` table includes:
 src/
 ├── main/
 │   ├── java/com/mchekin/tipcurrent/
+│   │   ├── config/           # WebSocket configuration
 │   │   ├── controller/       # REST controllers
 │   │   ├── domain/           # JPA entities
 │   │   ├── dto/              # Request/Response DTOs
@@ -303,6 +408,7 @@ For local development, defaults match the Docker Compose configuration.
 - Spring Boot 4.0.1
 - Java 25
 - PostgreSQL 17
+- WebSocket with STOMP protocol
 - Maven
 - Lombok
 - Testcontainers
@@ -311,13 +417,11 @@ For local development, defaults match the Docker Compose configuration.
 
 Future iterations may include:
 
-- Querying and filtering tips
 - Aggregation and analytics
-- Real-time delivery mechanisms
 - Caching layer
 - Authentication and authorization
 - Rate limiting
-- WebSocket support for real-time updates
+- Multi-region deployment support
 
 ## License
 

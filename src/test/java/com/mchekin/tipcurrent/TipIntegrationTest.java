@@ -13,14 +13,27 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.messaging.converter.MappingJackson2MessageConverter;
+import org.springframework.messaging.simp.stomp.StompFrameHandler;
+import org.springframework.messaging.simp.stomp.StompHeaders;
+import org.springframework.messaging.simp.stomp.StompSession;
+import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.web.socket.client.standard.StandardWebSocketClient;
+import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -249,6 +262,66 @@ class TipIntegrationTest {
         );
 
         return response.getBody();
+    }
+
+    @Test
+    @SuppressWarnings("deprecation") // MappingJackson2MessageConverter deprecated but no replacement yet in Spring Boot 4.0.1
+    void shouldBroadcastTipViaWebSocket() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<TipResponse> receivedMessage = new AtomicReference<>();
+
+        WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+
+        MappingJackson2MessageConverter messageConverter = new MappingJackson2MessageConverter();
+        messageConverter.setObjectMapper(objectMapper);
+        stompClient.setMessageConverter(messageConverter);
+
+        StompSession session = stompClient
+                .connectAsync(String.format("ws://localhost:%d/ws", port), new StompSessionHandlerAdapter() {})
+                .get(10, TimeUnit.SECONDS);
+
+        session.subscribe("/topic/rooms/gaming_stream_123", new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return TipResponse.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+                receivedMessage.set((TipResponse) payload);
+                latch.countDown();
+            }
+        });
+
+        // Give subscription time to be fully registered
+        Thread.sleep(2000);
+
+        // Create a tip via REST API
+        CreateTipRequest request = CreateTipRequest.builder()
+                .roomId("gaming_stream_123")
+                .senderId("alice")
+                .recipientId("bob")
+                .amount(new BigDecimal("100.00"))
+                .message("WebSocket test")
+                .build();
+
+        restTemplate.postForEntity(createUrl("/api/tips"), request, TipResponse.class);
+
+        // Wait for WebSocket message
+        boolean received = latch.await(10, TimeUnit.SECONDS);
+
+        assertThat(received).as("WebSocket message should be received within timeout").isTrue();
+        TipResponse tipResponse = receivedMessage.get();
+        assertThat(tipResponse).isNotNull();
+        assertThat(tipResponse.getRoomId()).isEqualTo("gaming_stream_123");
+        assertThat(tipResponse.getSenderId()).isEqualTo("alice");
+        assertThat(tipResponse.getRecipientId()).isEqualTo("bob");
+        assertThat(tipResponse.getMessage()).isEqualTo("WebSocket test");
+
+        session.disconnect();
     }
 
     private String createUrl(String path) {

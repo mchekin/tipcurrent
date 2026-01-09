@@ -11,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Optional;
@@ -21,6 +22,7 @@ import java.util.Optional;
 public class TipController {
 
     private final TipRepository tipRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @PostMapping
     public ResponseEntity<TipResponse> createTip(@RequestBody CreateTipRequest request) {
@@ -45,6 +47,9 @@ public class TipController {
                 .metadata(savedTip.getMetadata())
                 .createdAt(savedTip.getCreatedAt())
                 .build();
+
+        // Broadcast tip event to WebSocket subscribers
+        messagingTemplate.convertAndSend("/topic/rooms/" + savedTip.getRoomId(), response);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
