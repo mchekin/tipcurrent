@@ -1,7 +1,6 @@
 package com.mchekin.tipcurrent;
 
 import com.mchekin.tipcurrent.domain.RoomStatsHourly;
-import com.mchekin.tipcurrent.domain.Tip;
 import com.mchekin.tipcurrent.dto.RoomStatsResponse;
 import com.mchekin.tipcurrent.repository.RoomStatsHourlyRepository;
 import com.mchekin.tipcurrent.repository.TipRepository;
@@ -84,8 +83,8 @@ class AnalyticsIntegrationTest {
 
         List<RoomStatsHourly> stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
         assertThat(stats).hasSize(1);
-        assertThat(stats.get(0).getTotalTips()).isEqualTo(2);
-        assertThat(stats.get(0).getTotalAmount()).isEqualByComparingTo(new BigDecimal("300"));
+        assertThat(stats.getFirst().getTotalTips()).isEqualTo(2);
+        assertThat(stats.getFirst().getTotalAmount()).isEqualByComparingTo(new BigDecimal("300"));
 
         ResponseEntity<RoomStatsResponse> response = restTemplate.getForEntity(
                 createUrl("/api/analytics/rooms/room1/stats"),
@@ -100,7 +99,7 @@ class AnalyticsIntegrationTest {
     }
 
     @Test
-    void shouldAggregateMultipleHours() {
+    void shouldRetrieveAllHoursWithoutDateFiltering() {
         Instant hour1 = Instant.parse("2024-01-15T10:00:00Z");
         Instant hour2 = Instant.parse("2024-01-15T11:00:00Z");
         Instant hour3 = Instant.parse("2024-01-15T12:00:00Z");
@@ -126,7 +125,7 @@ class AnalyticsIntegrationTest {
     }
 
     @Test
-    void shouldFilterByDateRange() {
+    void shouldFilterToSingleHourWithExclusiveEndDate() {
         Instant hour1 = Instant.parse("2024-01-15T10:00:00Z");
         Instant hour2 = Instant.parse("2024-01-15T11:00:00Z");
         Instant hour3 = Instant.parse("2024-01-15T12:00:00Z");
@@ -147,7 +146,7 @@ class AnalyticsIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getStats()).hasSize(1);
-        assertThat(response.getBody().getStats().get(0).getPeriodStart()).isEqualTo(hour1);
+        assertThat(response.getBody().getStats().getFirst().getPeriodStart()).isEqualTo(hour1);
     }
 
     @Test
@@ -204,9 +203,9 @@ class AnalyticsIntegrationTest {
 
         List<RoomStatsHourly> stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
         assertThat(stats).hasSize(1);
-        assertThat(stats.get(0).getTotalTips()).isEqualTo(4);
-        assertThat(stats.get(0).getUniqueSenders()).isEqualTo(2);
-        assertThat(stats.get(0).getUniqueRecipients()).isEqualTo(2);
+        assertThat(stats.getFirst().getTotalTips()).isEqualTo(4);
+        assertThat(stats.getFirst().getUniqueSenders()).isEqualTo(2);
+        assertThat(stats.getFirst().getUniqueRecipients()).isEqualTo(2);
     }
 
     @Test
@@ -220,7 +219,7 @@ class AnalyticsIntegrationTest {
 
         List<RoomStatsHourly> stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
         assertThat(stats).hasSize(1);
-        assertThat(stats.get(0).getAverageTipAmount()).isEqualByComparingTo(new BigDecimal("150.00"));
+        assertThat(stats.getFirst().getAverageTipAmount()).isEqualByComparingTo(new BigDecimal("150.00"));
 
         ResponseEntity<RoomStatsResponse> response = restTemplate.getForEntity(
                 createUrl("/api/analytics/rooms/room1/stats"),
@@ -250,15 +249,23 @@ class AnalyticsIntegrationTest {
     }
 
     @Test
-    void shouldPreventDuplicateAggregation() {
+    void shouldUpsertOnDuplicateAggregation() {
         Instant hourStart = Instant.parse("2024-01-15T10:00:00Z");
         createTipAt("room1", "alice", "bob", new BigDecimal("100"), hourStart.plusSeconds(600));
 
         aggregationService.aggregateHourlyStats(hourStart);
+
+        List<RoomStatsHourly> statsAfterFirst = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(statsAfterFirst).hasSize(1);
+        assertThat(statsAfterFirst.getFirst().getTotalTips()).isEqualTo(1);
+        assertThat(statsAfterFirst.getFirst().getTotalAmount()).isEqualByComparingTo(new BigDecimal("100"));
+
         aggregationService.aggregateHourlyStats(hourStart);
 
-        List<RoomStatsHourly> stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
-        assertThat(stats.size()).isGreaterThan(0);
+        List<RoomStatsHourly> statsAfterSecond = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(statsAfterSecond).hasSize(1);
+        assertThat(statsAfterSecond.getFirst().getId()).isEqualTo(statsAfterFirst.getFirst().getId());
+        assertThat(statsAfterSecond.getFirst().getTotalTips()).isEqualTo(1);
     }
 
     @Test
@@ -281,9 +288,75 @@ class AnalyticsIntegrationTest {
         );
 
         assertThat(response.getBody().getStats()).hasSize(3);
-        assertThat(response.getBody().getStats().get(0).getPeriodStart()).isEqualTo(hour1);
+        assertThat(response.getBody().getStats().getFirst().getPeriodStart()).isEqualTo(hour1);
         assertThat(response.getBody().getStats().get(1).getPeriodStart()).isEqualTo(hour2);
-        assertThat(response.getBody().getStats().get(2).getPeriodStart()).isEqualTo(hour3);
+        assertThat(response.getBody().getStats().getLast().getPeriodStart()).isEqualTo(hour3);
+    }
+
+    @Test
+    void shouldHandleTipsAtHourBoundaries() {
+        Instant hourStart = Instant.parse("2024-01-15T10:00:00Z");
+        Instant hourEnd = Instant.parse("2024-01-15T11:00:00Z");
+
+        createTipAt("room1", "alice", "bob", new BigDecimal("100"), hourStart);
+        createTipAt("room1", "charlie", "bob", new BigDecimal("200"), hourStart.plusSeconds(1));
+        createTipAt("room1", "dave", "bob", new BigDecimal("150"), hourEnd.minusSeconds(1));
+        createTipAt("room1", "eve", "bob", new BigDecimal("50"), hourEnd);
+
+        aggregationService.aggregateHourlyStats(hourStart);
+
+        List<RoomStatsHourly> stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(stats).hasSize(1);
+        assertThat(stats.getFirst().getTotalTips()).isEqualTo(3);
+        assertThat(stats.getFirst().getTotalAmount()).isEqualByComparingTo(new BigDecimal("450"));
+    }
+
+    @Test
+    void shouldReaggregateWithNewData() {
+        Instant hourStart = Instant.parse("2024-01-15T10:00:00Z");
+        createTipAt("room1", "alice", "bob", new BigDecimal("100"), hourStart.plusSeconds(600));
+
+        aggregationService.aggregateHourlyStats(hourStart);
+
+        List<RoomStatsHourly> statsAfterFirst = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(statsAfterFirst.getFirst().getTotalTips()).isEqualTo(1);
+        assertThat(statsAfterFirst.getFirst().getTotalAmount()).isEqualByComparingTo(new BigDecimal("100"));
+
+        createTipAt("room1", "charlie", "bob", new BigDecimal("200"), hourStart.plusSeconds(1800));
+
+        aggregationService.aggregateHourlyStats(hourStart);
+
+        List<RoomStatsHourly> statsAfterSecond = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(statsAfterSecond).hasSize(1);
+        assertThat(statsAfterSecond.getFirst().getTotalTips()).isEqualTo(2);
+        assertThat(statsAfterSecond.getFirst().getTotalAmount()).isEqualByComparingTo(new BigDecimal("300"));
+        assertThat(statsAfterSecond.getFirst().getAverageTipAmount()).isEqualByComparingTo(new BigDecimal("150.00"));
+    }
+
+    @Test
+    void shouldFilterToMultipleHoursAndCalculateSummary() {
+        Instant hour1 = Instant.parse("2024-01-15T10:00:00Z");
+        Instant hour2 = Instant.parse("2024-01-15T11:00:00Z");
+        Instant hour3 = Instant.parse("2024-01-15T12:00:00Z");
+
+        createTipAt("room1", "alice", "bob", new BigDecimal("100"), hour1.plusSeconds(600));
+        createTipAt("room1", "charlie", "bob", new BigDecimal("200"), hour2.plusSeconds(600));
+        createTipAt("room1", "dave", "bob", new BigDecimal("300"), hour2.plusSeconds(1200));
+        createTipAt("room1", "eve", "bob", new BigDecimal("400"), hour3.plusSeconds(600));
+
+        aggregationService.aggregateHourlyStats(hour1);
+        aggregationService.aggregateHourlyStats(hour2);
+        aggregationService.aggregateHourlyStats(hour3);
+
+        ResponseEntity<RoomStatsResponse> response = restTemplate.getForEntity(
+                createUrl("/api/analytics/rooms/room1/stats?startDate=" + hour1 + "&endDate=" + hour3),
+                RoomStatsResponse.class
+        );
+
+        assertThat(response.getBody().getStats()).hasSize(2);
+        assertThat(response.getBody().getSummary().getTotalTips()).isEqualTo(3);
+        assertThat(response.getBody().getSummary().getTotalAmount()).isEqualByComparingTo(new BigDecimal("600"));
+        assertThat(response.getBody().getSummary().getAverageTipAmount()).isEqualByComparingTo(new BigDecimal("200.00"));
     }
 
     private void createTipAt(String roomId, String senderId, String recipientId, BigDecimal amount, Instant createdAt) {
