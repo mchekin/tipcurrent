@@ -6,7 +6,6 @@ import com.mchekin.tipcurrent.dto.RoomStatsResponse;
 import com.mchekin.tipcurrent.repository.RoomStatsHourlyRepository;
 import com.mchekin.tipcurrent.repository.TipRepository;
 import com.mchekin.tipcurrent.service.StatsAggregationService;
-import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,16 +15,16 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,10 +66,7 @@ class AnalyticsIntegrationTest {
     private StatsAggregationService aggregationService;
 
     @Autowired
-    private EntityManager entityManager;
-
-    @Autowired
-    private TransactionTemplate transactionTemplate;
+    private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setUp() {
@@ -291,22 +287,10 @@ class AnalyticsIntegrationTest {
     }
 
     private void createTipAt(String roomId, String senderId, String recipientId, BigDecimal amount, Instant createdAt) {
-        Tip tip = Tip.builder()
-                .roomId(roomId)
-                .senderId(senderId)
-                .recipientId(recipientId)
-                .amount(amount)
-                .build();
-
-        Tip savedTip = tipRepository.save(tip);
-        tipRepository.flush();
-
-        transactionTemplate.executeWithoutResult(status -> {
-            entityManager.createNativeQuery("UPDATE tips SET created_at = :createdAt WHERE id = :id")
-                    .setParameter("createdAt", createdAt)
-                    .setParameter("id", savedTip.getId())
-                    .executeUpdate();
-        });
+        jdbcTemplate.update(
+                "INSERT INTO tips (room_id, sender_id, recipient_id, amount, created_at) VALUES (?, ?, ?, ?, ?)",
+                roomId, senderId, recipientId, amount, Timestamp.from(createdAt)
+        );
     }
 
     private String createUrl(String path) {

@@ -42,10 +42,6 @@ public interface TipRepository extends JpaRepository<Tip, Long> {
             @Param("periodEnd") Instant periodEnd
     );
 
-    @org.springframework.data.jpa.repository.Modifying
-    @Query(value = "UPDATE tips SET created_at = :createdAt WHERE id = :id", nativeQuery = true)
-    void updateCreatedAt(@Param("id") Long id, @Param("createdAt") Instant createdAt);
-
     interface RoomStatsProjection {
         String getRoomId();
         Long getTotalTips();
