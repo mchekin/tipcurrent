@@ -10,6 +10,8 @@ TipCurrent provides a reliable, self-hosted solution for ingesting and persistin
 
 - REST API for creating and querying tip events
 - Real-time WebSocket broadcasting for tip events
+- Production-quality Analytics API with pre-aggregated summary tables
+- Scheduled hourly aggregation for OLTP/OLAP separation
 - PostgreSQL persistence with proper indexing
 - Docker Compose for easy local development
 - Integration tests with Testcontainers
@@ -323,6 +325,143 @@ WebSocket messages contain the same TipResponse format as the REST API:
 </html>
 ```
 
+## Analytics API
+
+TipCurrent provides production-quality analytics using **pre-aggregated summary tables**. This architecture separates OLTP (transactional writes) from OLAP (analytical queries), ensuring excellent performance for both operations.
+
+### Architecture
+
+The analytics system uses a scheduled aggregation pattern:
+
+```
+Tip Creation → tips table (OLTP, write-optimized)
+                     ↓
+              @Scheduled job (runs hourly at :05)
+                     ↓
+         room_stats_hourly (pre-aggregated summary table)
+                     ↓
+    Analytics API → Fast reads from summary table only
+```
+
+**Key Benefits:**
+- No resource contention between writes and analytics
+- Predictable, fast query performance
+- Horizontally scalable with read replicas
+- Simple operations - just Postgres + Spring
+
+**Trade-offs:**
+- Data freshness: Up to 1 hour lag (analytics show stats up to the last completed hour)
+- Storage overhead: Minimal (~168 rows/room/week)
+
+### Get Room Statistics
+
+**Endpoint:** `GET /api/analytics/rooms/{roomId}/stats`
+
+**Path Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| roomId | string | Yes | The room identifier |
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| startDate | instant | No | Filter from this time (ISO 8601 format) |
+| endDate | instant | No | Filter to this time (ISO 8601 format) |
+
+**Response:** HTTP 200 OK with room statistics aggregated by hour.
+
+**Examples:**
+
+Get all statistics for a room:
+```bash
+curl http://localhost:8080/api/analytics/rooms/gaming_stream_123/stats
+```
+
+Get statistics for a specific date range:
+```bash
+curl "http://localhost:8080/api/analytics/rooms/gaming_stream_123/stats?startDate=2024-01-15T10:00:00Z&endDate=2024-01-15T16:00:00Z"
+```
+
+**Response Format:**
+
+```json
+{
+  "roomId": "gaming_stream_123",
+  "stats": [
+    {
+      "periodStart": "2024-01-15T10:00:00Z",
+      "periodEnd": "2024-01-15T11:00:00Z",
+      "totalTips": 25,
+      "totalAmount": 2500.00,
+      "uniqueSenders": 12,
+      "uniqueRecipients": 3,
+      "averageTipAmount": 100.00
+    },
+    {
+      "periodStart": "2024-01-15T11:00:00Z",
+      "periodEnd": "2024-01-15T12:00:00Z",
+      "totalTips": 30,
+      "totalAmount": 3200.00,
+      "uniqueSenders": 15,
+      "uniqueRecipients": 4,
+      "averageTipAmount": 106.67
+    }
+  ],
+  "summary": {
+    "totalTips": 55,
+    "totalAmount": 5700.00,
+    "averageTipAmount": 103.64
+  }
+}
+```
+
+**Response Fields:**
+
+- `roomId`: The room identifier
+- `stats`: Array of hourly statistics, ordered by period start (ascending)
+  - `periodStart`: Start of the hour (inclusive)
+  - `periodEnd`: End of the hour (exclusive)
+  - `totalTips`: Total number of tips in this hour
+  - `totalAmount`: Sum of all tip amounts
+  - `uniqueSenders`: Count of distinct senders
+  - `uniqueRecipients`: Count of distinct recipients
+  - `averageTipAmount`: Mean tip amount for this hour
+- `summary`: Aggregated statistics across all returned periods
+  - `totalTips`: Total tips across all periods
+  - `totalAmount`: Sum across all periods
+  - `averageTipAmount`: Overall average (calculated from summary totals)
+
+### How Aggregation Works
+
+1. **Scheduled Job**: Every hour at :05 (e.g., 10:05, 11:05), a background job runs
+2. **Single Query**: One efficient `GROUP BY` query aggregates all tips from the previous hour across all rooms
+3. **Summary Table**: Results are stored in the `room_stats_hourly` table
+4. **Analytics Queries**: The `/api/analytics` endpoint reads ONLY from the summary table, never from the `tips` table
+
+### Data Freshness
+
+Analytics data is aggregated hourly with up to **1 hour lag**:
+- Tips created at 10:30 will be aggregated at 11:05
+- The 10:00-11:00 hourly stats become available at 11:05
+
+This trade-off ensures production-quality performance and scalability.
+
+### Use Cases
+
+- **Creator Dashboards**: Track revenue trends over time
+- **Performance Analytics**: Compare engagement across different time periods
+- **Audience Insights**: Analyze sender and recipient patterns
+- **Historical Reporting**: Generate reports on past engagement
+
+### Future Evolution
+
+The API is designed to support migration to dedicated analytics databases (ClickHouse, TimescaleDB) without breaking changes:
+- API contract remains identical
+- Backend implementation swaps data source
+- Clients see no difference
+
 ## Running Tests
 
 ### Unit and Integration Tests
@@ -364,7 +503,9 @@ You can use the included Docker Compose setup to test manually:
 
 ## Database Schema
 
-The `tips` table includes:
+### Tips Table (OLTP - Write-Optimized)
+
+The `tips` table stores transactional tip events:
 
 - `id`: Auto-generated primary key
 - `room_id`: Indexed for efficient room-based queries
@@ -375,6 +516,26 @@ The `tips` table includes:
 - `metadata`: Optional JSON metadata
 - `created_at`: Timestamp, auto-set on creation (indexed)
 
+### Room Stats Hourly Table (OLAP - Read-Optimized)
+
+The `room_stats_hourly` table stores pre-aggregated analytics:
+
+- `id`: Auto-generated primary key
+- `room_id`: Room identifier
+- `period_start`: Start of hourly period (indexed with room_id)
+- `period_end`: End of hourly period
+- `total_tips`: Count of tips in this hour
+- `total_amount`: Sum of tip amounts (precision 19, scale 2)
+- `unique_senders`: Count of distinct senders
+- `unique_recipients`: Count of distinct recipients
+- `average_tip_amount`: Mean tip amount (precision 19, scale 2)
+- `last_aggregated_at`: Timestamp when aggregation ran
+
+**Indexes:**
+- Composite index on `(room_id, period_start)` for efficient range queries
+- Index on `period_start` for time-based queries
+- Unique constraint on `(room_id, period_start)` prevents duplicate aggregations
+
 ## Project Structure
 
 ```
@@ -382,15 +543,18 @@ src/
 ├── main/
 │   ├── java/com/mchekin/tipcurrent/
 │   │   ├── config/           # WebSocket configuration
-│   │   ├── controller/       # REST controllers
-│   │   ├── domain/           # JPA entities
+│   │   ├── controller/       # REST controllers (Tip, Analytics)
+│   │   ├── domain/           # JPA entities (Tip, RoomStatsHourly)
 │   │   ├── dto/              # Request/Response DTOs
-│   │   └── repository/       # Spring Data repositories
+│   │   ├── repository/       # Spring Data repositories
+│   │   ├── scheduler/        # Scheduled jobs (hourly aggregation)
+│   │   └── service/          # Business logic (stats aggregation)
 │   └── resources/
 │       └── application.properties
 └── test/
     └── java/com/mchekin/tipcurrent/
-        └── TipIntegrationTest.java
+        ├── TipIntegrationTest.java
+        └── AnalyticsIntegrationTest.java
 ```
 
 ## Configuration
