@@ -4,6 +4,7 @@ import com.mchekin.tipcurrent.domain.Tip;
 import com.mchekin.tipcurrent.dto.CreateTipRequest;
 import com.mchekin.tipcurrent.dto.TipResponse;
 import com.mchekin.tipcurrent.repository.TipRepository;
+import com.mchekin.tipcurrent.service.WebhookService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -23,6 +24,7 @@ public class TipController {
 
     private final TipRepository tipRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final WebhookService webhookService;
 
     @PostMapping
     public ResponseEntity<TipResponse> createTip(@RequestBody CreateTipRequest request) {
@@ -50,6 +52,9 @@ public class TipController {
 
         // Broadcast tip event to WebSocket subscribers
         messagingTemplate.convertAndSend("/topic/rooms/" + savedTip.getRoomId(), response);
+
+        // Notify webhooks asynchronously
+        webhookService.notifyWebhooks(savedTip.getRoomId(), "tip.created", response);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
