@@ -372,8 +372,9 @@ class WebhookIntegrationTest {
 
         restTemplate.postForEntity(createUrl("/api/tips"), tipRequest, TipResponse.class);
 
-        // Wait for webhook delivery attempts (initial + 1 retry)
-        Thread.sleep(8000);  // 5s retry delay + processing time
+        // Wait for webhook delivery attempts (initial + 1 retry after 5s delay)
+        // Use longer timeout for CI environments which can be slower
+        Thread.sleep(12000);
 
         List<WebhookDeliveryLog> logs = deliveryLogRepository.findAll();
         assertThat(logs).hasSizeGreaterThanOrEqualTo(1);  // At least initial attempt
