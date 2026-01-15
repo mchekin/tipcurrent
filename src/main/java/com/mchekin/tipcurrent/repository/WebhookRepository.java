@@ -10,6 +10,4 @@ import java.util.List;
 public interface WebhookRepository extends JpaRepository<Webhook, Long> {
 
     List<Webhook> findByEventAndEnabledTrue(String event);
-
-    List<Webhook> findByEnabledTrue();
 }
