@@ -14,6 +14,7 @@ import java.time.Instant;
 public class WebhookResponse {
 
     private Long id;
+    private String roomId;
     private String url;
     private String event;
     private Boolean enabled;

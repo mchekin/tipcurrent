@@ -54,7 +54,7 @@ public class TipController {
         messagingTemplate.convertAndSend("/topic/rooms/" + savedTip.getRoomId(), response);
 
         // Notify webhooks asynchronously
-        webhookService.notifyWebhooks("tip.created", response);
+        webhookService.notifyWebhooks(savedTip.getRoomId(), "tip.created", response);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }

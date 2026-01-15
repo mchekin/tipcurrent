@@ -119,6 +119,7 @@ class WebhookIntegrationTest {
     @Test
     void shouldCreateWebhook() {
         CreateWebhookRequest request = new CreateWebhookRequest(
+                "room1",
                 "http://localhost:" + mockServerPort + "/webhook",
                 "tip.created",
                 "my-secret-key",
@@ -134,6 +135,7 @@ class WebhookIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getId()).isNotNull();
+        assertThat(response.getBody().getRoomId()).isEqualTo(request.getRoomId());
         assertThat(response.getBody().getUrl()).isEqualTo(request.getUrl());
         assertThat(response.getBody().getEvent()).isEqualTo(request.getEvent());
         assertThat(response.getBody().getEnabled()).isTrue();
@@ -144,9 +146,9 @@ class WebhookIntegrationTest {
 
     @Test
     void shouldListWebhooks() {
-        // Create two webhooks
-        Webhook webhook1 = createAndSaveWebhook("http://example.com/1", "tip.created", "secret1", "Webhook 1");
-        Webhook webhook2 = createAndSaveWebhook("http://example.com/2", "tip.created", "secret2", "Webhook 2");
+        // Create two webhooks for the same room
+        Webhook webhook1 = createAndSaveWebhook("room1", "http://example.com/1", "tip.created", "secret1", "Webhook 1");
+        Webhook webhook2 = createAndSaveWebhook("room1", "http://example.com/2", "tip.created", "secret2", "Webhook 2");
 
         ResponseEntity<WebhookResponse[]> response = restTemplate.getForEntity(
                 createUrl("/api/webhooks"),
@@ -163,7 +165,7 @@ class WebhookIntegrationTest {
 
     @Test
     void shouldGetWebhookById() {
-        Webhook webhook = createAndSaveWebhook("http://example.com/webhook", "tip.created", "secret", "Test");
+        Webhook webhook = createAndSaveWebhook("room1", "http://example.com/webhook", "tip.created", "secret", "Test");
 
         ResponseEntity<WebhookResponse> response = restTemplate.getForEntity(
                 createUrl("/api/webhooks/" + webhook.getId()),
@@ -188,7 +190,7 @@ class WebhookIntegrationTest {
 
     @Test
     void shouldDeleteWebhook() {
-        Webhook webhook = createAndSaveWebhook("http://example.com/webhook", "tip.created", "secret", "Test");
+        Webhook webhook = createAndSaveWebhook("room1", "http://example.com/webhook", "tip.created", "secret", "Test");
 
         restTemplate.delete(createUrl("/api/webhooks/" + webhook.getId()));
 
@@ -197,13 +199,19 @@ class WebhookIntegrationTest {
 
     @Test
     void shouldReturn404WhenDeletingNonexistentWebhook() {
-        restTemplate.delete(createUrl("/api/webhooks/99999"));
-        // No exception should be thrown
+        ResponseEntity<Void> response = restTemplate.exchange(
+                createUrl("/api/webhooks/99999"),
+                org.springframework.http.HttpMethod.DELETE,
+                null,
+                Void.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test
     void shouldEnableWebhook() {
-        Webhook webhook = createAndSaveWebhook("http://example.com/webhook", "tip.created", "secret", "Test");
+        Webhook webhook = createAndSaveWebhook("room1", "http://example.com/webhook", "tip.created", "secret", "Test");
         webhook.setEnabled(false);
         webhookRepository.save(webhook);
 
@@ -219,7 +227,7 @@ class WebhookIntegrationTest {
 
     @Test
     void shouldDisableWebhook() {
-        Webhook webhook = createAndSaveWebhook("http://example.com/webhook", "tip.created", "secret", "Test");
+        Webhook webhook = createAndSaveWebhook("room1", "http://example.com/webhook", "tip.created", "secret", "Test");
 
         restTemplate.patchForObject(
                 createUrl("/api/webhooks/" + webhook.getId() + "/disable"),
@@ -234,7 +242,7 @@ class WebhookIntegrationTest {
     @Test
     void shouldDeliverWebhookWhenTipCreated() throws Exception {
         String secret = "test-secret-key";
-        createAndSaveWebhook("http://localhost:" + mockServerPort + "/webhook", "tip.created", secret, "Test");
+        createAndSaveWebhook("room1", "http://localhost:" + mockServerPort + "/webhook", "tip.created", secret, "Test");
 
         CreateTipRequest tipRequest = new CreateTipRequest(
                 "room1",
@@ -276,6 +284,7 @@ class WebhookIntegrationTest {
     @Test
     void shouldNotDeliverWebhookWhenDisabled() throws Exception {
         Webhook webhook = createAndSaveWebhook(
+                "room1",
                 "http://localhost:" + mockServerPort + "/webhook",
                 "tip.created",
                 "secret",
@@ -304,6 +313,7 @@ class WebhookIntegrationTest {
     @Test
     void shouldLogSuccessfulWebhookDelivery() throws Exception {
         Webhook webhook = createAndSaveWebhook(
+                "room1",
                 "http://localhost:" + mockServerPort + "/webhook",
                 "tip.created",
                 "secret",
@@ -344,6 +354,7 @@ class WebhookIntegrationTest {
     void shouldLogFailedWebhookDelivery() throws Exception {
         // Create webhook pointing to non-existent server
         Webhook webhook = createAndSaveWebhook(
+                "room1",
                 "http://localhost:9998/webhook",  // Wrong port - nothing listening
                 "tip.created",
                 "secret",
@@ -378,6 +389,7 @@ class WebhookIntegrationTest {
     @Test
     void shouldGetWebhookDeliveryLogs() throws Exception {
         Webhook webhook = createAndSaveWebhook(
+                "room1",
                 "http://localhost:" + mockServerPort + "/webhook",
                 "tip.created",
                 "secret",
@@ -414,6 +426,7 @@ class WebhookIntegrationTest {
     @Test
     void shouldTestWebhook() throws Exception {
         Webhook webhook = createAndSaveWebhook(
+                "room1",
                 "http://localhost:" + mockServerPort + "/webhook",
                 "tip.created",
                 "secret",
@@ -433,7 +446,7 @@ class WebhookIntegrationTest {
         assertThat(received).isTrue();
         assertThat(receivedWebhooks).hasSize(1);
 
-        ReceivedWebhook receivedWebhook = receivedWebhooks.get(0);
+        ReceivedWebhook receivedWebhook = receivedWebhooks.getFirst();
         assertThat(receivedWebhook.event()).isEqualTo("test.event");
         assertThat(receivedWebhook.body()).contains("This is a test webhook delivery");
     }
@@ -454,8 +467,9 @@ class WebhookIntegrationTest {
         String secret1 = "secret1";
         String secret2 = "secret2";
 
-        createAndSaveWebhook("http://localhost:" + mockServerPort + "/webhook", "tip.created", secret1, "Webhook 1");
-        createAndSaveWebhook("http://localhost:" + mockServerPort + "/webhook", "tip.created", secret2, "Webhook 2");
+        // Both webhooks for the same room
+        createAndSaveWebhook("room1", "http://localhost:" + mockServerPort + "/webhook", "tip.created", secret1, "Webhook 1");
+        createAndSaveWebhook("room1", "http://localhost:" + mockServerPort + "/webhook", "tip.created", secret2, "Webhook 2");
 
         webhookLatch = new CountDownLatch(2);  // Expect 2 deliveries
 
@@ -480,8 +494,178 @@ class WebhookIntegrationTest {
         assertThat(receivedWebhooks.get(0).signature()).isNotEqualTo(receivedWebhooks.get(1).signature());
     }
 
-    private Webhook createAndSaveWebhook(String url, String event, String secret, String description) {
+    @Test
+    void shouldNotDeliverWebhookForDifferentRoom() throws Exception {
+        // Webhook is registered for room2, but tip is created in room1
+        createAndSaveWebhook("room2", "http://localhost:" + mockServerPort + "/webhook", "tip.created", "secret", "Test");
+
+        CreateTipRequest tipRequest = new CreateTipRequest(
+                "room1",  // Different room!
+                "alice",
+                "bob",
+                new BigDecimal("100.00"),
+                "Great stream!",
+                null
+        );
+
+        restTemplate.postForEntity(createUrl("/api/tips"), tipRequest, TipResponse.class);
+
+        // Webhook should NOT be delivered because it's for a different room
+        boolean received = webhookLatch.await(2, TimeUnit.SECONDS);
+        assertThat(received).isFalse();
+        assertThat(receivedWebhooks).isEmpty();
+    }
+
+    @Test
+    void shouldCreateGlobalWebhook() {
+        // Create webhook without roomId (global)
+        CreateWebhookRequest request = new CreateWebhookRequest(
+                null,  // null roomId = global webhook
+                "http://localhost:" + mockServerPort + "/webhook",
+                "tip.created",
+                "my-secret-key",
+                "Global webhook for all rooms"
+        );
+
+        ResponseEntity<WebhookResponse> response = restTemplate.postForEntity(
+                createUrl("/api/webhooks"),
+                request,
+                WebhookResponse.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getRoomId()).isNull();
+        assertThat(response.getBody().getDescription()).isEqualTo("Global webhook for all rooms");
+    }
+
+    @Test
+    void shouldDeliverGlobalWebhookForAnyRoom() throws Exception {
+        // Create a global webhook (no roomId)
+        createAndSaveGlobalWebhook("http://localhost:" + mockServerPort + "/webhook", "tip.created", "secret", "Global");
+
+        // Create tip in room1 - global webhook should fire
+        CreateTipRequest tipRequest = new CreateTipRequest(
+                "room1",
+                "alice",
+                "bob",
+                new BigDecimal("100.00"),
+                "Great stream!",
+                null
+        );
+
+        restTemplate.postForEntity(createUrl("/api/tips"), tipRequest, TipResponse.class);
+
+        boolean received = webhookLatch.await(10, TimeUnit.SECONDS);
+        assertThat(received).isTrue();
+        assertThat(receivedWebhooks).hasSize(1);
+
+        // Create tip in room2 - same global webhook should fire again
+        receivedWebhooks.clear();
+        webhookLatch = new CountDownLatch(1);
+
+        CreateTipRequest tipRequest2 = new CreateTipRequest(
+                "room2",  // Different room
+                "charlie",
+                "dave",
+                new BigDecimal("50.00"),
+                "Nice!",
+                null
+        );
+
+        restTemplate.postForEntity(createUrl("/api/tips"), tipRequest2, TipResponse.class);
+
+        received = webhookLatch.await(10, TimeUnit.SECONDS);
+        assertThat(received).isTrue();
+        assertThat(receivedWebhooks).hasSize(1);
+    }
+
+    @Test
+    void shouldDeliverBothGlobalAndRoomWebhooks() throws Exception {
+        // Create a global webhook
+        createAndSaveGlobalWebhook("http://localhost:" + mockServerPort + "/webhook", "tip.created", "global-secret", "Global");
+        // Create a room-specific webhook for room1
+        createAndSaveWebhook("room1", "http://localhost:" + mockServerPort + "/webhook", "tip.created", "room-secret", "Room1");
+
+        webhookLatch = new CountDownLatch(2);  // Expect 2 deliveries
+
+        CreateTipRequest tipRequest = new CreateTipRequest(
+                "room1",
+                "alice",
+                "bob",
+                new BigDecimal("100.00"),
+                "Great stream!",
+                null
+        );
+
+        restTemplate.postForEntity(createUrl("/api/tips"), tipRequest, TipResponse.class);
+
+        boolean received = webhookLatch.await(10, TimeUnit.SECONDS);
+        assertThat(received).isTrue();
+        assertThat(receivedWebhooks).hasSize(2);
+
+        // Both webhooks fired - different signatures due to different secrets
+        assertThat(receivedWebhooks.get(0).signature()).isNotEqualTo(receivedWebhooks.get(1).signature());
+    }
+
+    @Test
+    void shouldListOnlyGlobalWebhooks() {
+        // Create a global webhook
+        createAndSaveGlobalWebhook("http://example.com/global", "tip.created", "secret", "Global webhook");
+        // Create room-specific webhooks
+        createAndSaveWebhook("room1", "http://example.com/room1", "tip.created", "secret", "Room1 webhook");
+        createAndSaveWebhook("room2", "http://example.com/room2", "tip.created", "secret", "Room2 webhook");
+
+        // List only global webhooks
+        ResponseEntity<WebhookResponse[]> response = restTemplate.getForEntity(
+                createUrl("/api/webhooks?global=true"),
+                WebhookResponse[].class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody()).hasSize(1);
+        assertThat(response.getBody()[0].getRoomId()).isNull();
+        assertThat(response.getBody()[0].getDescription()).isEqualTo("Global webhook");
+    }
+
+    @Test
+    void shouldListWebhooksForSpecificRoom() {
+        // Create webhooks for different rooms and a global one
+        createAndSaveGlobalWebhook("http://example.com/global", "tip.created", "secret", "Global");
+        createAndSaveWebhook("room1", "http://example.com/room1-a", "tip.created", "secret", "Room1-A");
+        createAndSaveWebhook("room1", "http://example.com/room1-b", "tip.created", "secret", "Room1-B");
+        createAndSaveWebhook("room2", "http://example.com/room2", "tip.created", "secret", "Room2");
+
+        // List only room1 webhooks
+        ResponseEntity<WebhookResponse[]> response = restTemplate.getForEntity(
+                createUrl("/api/webhooks?roomId=room1"),
+                WebhookResponse[].class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody()).hasSize(2);
+        for (WebhookResponse webhook : response.getBody()) {
+            assertThat(webhook.getRoomId()).isEqualTo("room1");
+        }
+    }
+
+    private void createAndSaveGlobalWebhook(String url, String event, String secret, String description) {
         Webhook webhook = Webhook.builder()
+                .roomId(null)  // Global webhook
+                .url(url)
+                .event(event)
+                .secret(secret)
+                .description(description)
+                .enabled(true)
+                .build();
+        webhookRepository.save(webhook);
+    }
+
+    private Webhook createAndSaveWebhook(String roomId, String url, String event, String secret, String description) {
+        Webhook webhook = Webhook.builder()
+                .roomId(roomId)
                 .url(url)
                 .event(event)
                 .secret(secret)

@@ -9,5 +9,11 @@ import java.util.List;
 @Repository
 public interface WebhookRepository extends JpaRepository<Webhook, Long> {
 
-    List<Webhook> findByEventAndEnabledTrue(String event);
+    List<Webhook> findByRoomIdAndEventAndEnabledTrue(String roomId, String event);
+
+    List<Webhook> findByRoomIdIsNullAndEventAndEnabledTrue(String event);
+
+    List<Webhook> findByRoomId(String roomId);
+
+    List<Webhook> findByRoomIdIsNull();
 }

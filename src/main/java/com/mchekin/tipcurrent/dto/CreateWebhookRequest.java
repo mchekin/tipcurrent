@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CreateWebhookRequest {
 
+    private String roomId;
     private String url;
     private String event;
     private String secret;

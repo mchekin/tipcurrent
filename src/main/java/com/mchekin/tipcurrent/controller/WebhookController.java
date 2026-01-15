@@ -28,6 +28,7 @@ public class WebhookController {
     @PostMapping
     public ResponseEntity<WebhookResponse> createWebhook(@RequestBody CreateWebhookRequest request) {
         Webhook webhook = Webhook.builder()
+                .roomId(request.getRoomId())
                 .url(request.getUrl())
                 .event(request.getEvent())
                 .secret(request.getSecret())
@@ -41,8 +42,21 @@ public class WebhookController {
     }
 
     @GetMapping
-    public ResponseEntity<List<WebhookResponse>> listWebhooks() {
-        List<Webhook> webhooks = webhookRepository.findAll();
+    public ResponseEntity<List<WebhookResponse>> listWebhooks(
+            @RequestParam(required = false) String roomId,
+            @RequestParam(required = false, defaultValue = "false") boolean global) {
+
+        List<Webhook> webhooks;
+        if (global) {
+            // List only global webhooks (roomId is null)
+            webhooks = webhookRepository.findByRoomIdIsNull();
+        } else if (roomId != null) {
+            // List webhooks for a specific room
+            webhooks = webhookRepository.findByRoomId(roomId);
+        } else {
+            // List all webhooks
+            webhooks = webhookRepository.findAll();
+        }
 
         List<WebhookResponse> responses = webhooks.stream()
                 .map(this::toResponse)
@@ -119,6 +133,7 @@ public class WebhookController {
     private WebhookResponse toResponse(Webhook webhook) {
         return WebhookResponse.builder()
                 .id(webhook.getId())
+                .roomId(webhook.getRoomId())
                 .url(webhook.getUrl())
                 .event(webhook.getEvent())
                 .enabled(webhook.getEnabled())

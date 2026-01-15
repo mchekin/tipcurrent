@@ -11,6 +11,7 @@ import java.time.Instant;
 @Entity
 @Table(name = "webhooks",
     indexes = {
+        @Index(name = "idx_webhook_room_event_enabled", columnList = "roomId,event,enabled"),
         @Index(name = "idx_webhook_event_enabled", columnList = "event,enabled")
     }
 )
@@ -23,6 +24,9 @@ public class Webhook {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(length = 100)
+    private String roomId;  // null = global webhook (fires for all rooms)
 
     @Column(nullable = false, length = 2048)
     private String url;

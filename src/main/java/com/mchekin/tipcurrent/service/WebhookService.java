@@ -18,6 +18,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
@@ -37,12 +38,20 @@ public class WebhookService {
             .build();
 
     @Async
-    public void notifyWebhooks(String event, Object payload) {
-        List<Webhook> webhooks = webhookRepository.findByEventAndEnabledTrue(event);
+    public void notifyWebhooks(String roomId, String event, Object payload) {
+        // Get room-specific webhooks
+        List<Webhook> roomWebhooks = webhookRepository.findByRoomIdAndEventAndEnabledTrue(roomId, event);
+        // Get global webhooks (roomId is null)
+        List<Webhook> globalWebhooks = webhookRepository.findByRoomIdIsNullAndEventAndEnabledTrue(event);
 
-        log.info("Notifying {} webhooks for event: {}", webhooks.size(), event);
+        List<Webhook> allWebhooks = new ArrayList<>(roomWebhooks.size() + globalWebhooks.size());
+        allWebhooks.addAll(roomWebhooks);
+        allWebhooks.addAll(globalWebhooks);
 
-        for (Webhook webhook : webhooks) {
+        log.info("Notifying {} webhooks for roomId={}, event={} ({} room-specific, {} global)",
+                allWebhooks.size(), roomId, event, roomWebhooks.size(), globalWebhooks.size());
+
+        for (Webhook webhook : allWebhooks) {
             deliverWebhook(webhook, event, payload, 1);
         }
     }
