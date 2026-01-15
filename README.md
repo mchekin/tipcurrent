@@ -10,6 +10,7 @@ TipCurrent provides a reliable, self-hosted solution for ingesting and persistin
 
 - REST API for creating and querying tip events
 - Real-time WebSocket broadcasting for tip events
+- **Webhooks for event notifications** with HMAC signature verification
 - Production-quality Analytics API with pre-aggregated summary tables
 - Scheduled hourly aggregation for OLTP/OLAP separation
 - PostgreSQL persistence with proper indexing
@@ -461,6 +462,315 @@ The API is designed to support migration to dedicated analytics databases (Click
 - API contract remains identical
 - Backend implementation swaps data source
 - Clients see no difference
+
+## Webhooks
+
+TipCurrent provides webhooks for real-time event notifications to external systems. 
+When events occur (e.g., a new tip is created), TipCurrent can automatically send HTTP POST requests to configured webhook endpoints.
+
+### Use Cases
+
+- **Stream Overlays**: Trigger animations when tips are received
+- **Mobile Apps**: Send push notifications for tip events
+- **Analytics Platforms**: Sync tip data to external analytics systems
+- **Custom Workflows**: Build automated responses to tip events (e.g., email notifications, Discord messages)
+- **Integration**: Connect TipCurrent to your existing infrastructure
+
+### Architecture
+
+```
+Tip Created → TipCurrent → Webhook Delivery (async)
+                               ↓
+                         Your HTTP Endpoint
+```
+
+**Key Features:**
+- Asynchronous delivery (doesn't block tip creation)
+- HMAC signature verification for security
+- Automatic retry on failure (1 retry with 5-second delay)
+- Delivery logging for debugging
+- Per-webhook enable/disable control
+
+### Webhook Management API
+
+#### Create Webhook
+
+**Endpoint:** `POST /api/webhooks`
+
+**Request Body:**
+
+```json
+{
+  "url": "https://your-platform.com/webhooks/tipcurrent",
+  "event": "tip.created",
+  "secret": "your-webhook-secret",
+  "description": "Production webhook for tip notifications"
+}
+```
+
+**Response:** HTTP 201 Created
+
+```json
+{
+  "id": 1,
+  "url": "https://your-platform.com/webhooks/tipcurrent",
+  "event": "tip.created",
+  "enabled": true,
+  "description": "Production webhook for tip notifications",
+  "createdAt": "2024-01-15T10:00:00Z",
+  "updatedAt": "2024-01-15T10:00:00Z"
+}
+```
+
+#### List Webhooks
+
+**Endpoint:** `GET /api/webhooks`
+
+**Response:** HTTP 200 OK
+
+```json
+[
+  {
+    "id": 1,
+    "url": "https://your-platform.com/webhooks/tipcurrent",
+    "event": "tip.created",
+    "enabled": true,
+    "description": "Production webhook for tip notifications",
+    "createdAt": "2024-01-15T10:00:00Z",
+    "updatedAt": "2024-01-15T10:00:00Z"
+  }
+]
+```
+
+#### Get Webhook
+
+**Endpoint:** `GET /api/webhooks/{id}`
+
+**Response:** HTTP 200 OK (same format as create response)
+
+#### Delete Webhook
+
+**Endpoint:** `DELETE /api/webhooks/{id}`
+
+**Response:** HTTP 204 No Content
+
+#### Enable Webhook
+
+**Endpoint:** `PATCH /api/webhooks/{id}/enable`
+
+**Response:** HTTP 200 OK
+
+#### Disable Webhook
+
+**Endpoint:** `PATCH /api/webhooks/{id}/disable`
+
+**Response:** HTTP 200 OK
+
+#### Test Webhook
+
+**Endpoint:** `POST /api/webhooks/{id}/test`
+
+Sends a test payload to the webhook URL to verify it's configured correctly.
+
+**Response:** HTTP 202 Accepted
+
+#### Get Delivery Logs
+
+**Endpoint:** `GET /api/webhooks/{id}/deliveries?page=0&size=20`
+
+View delivery history for a specific webhook (success/failure, response codes, etc.).
+
+**Response:** HTTP 200 OK with paginated delivery logs
+
+### Webhook Payload Format
+
+When a tip is created, TipCurrent sends an HTTP POST request to your webhook URL:
+
+**Headers:**
+```
+Content-Type: application/json
+X-TipCurrent-Signature: <HMAC-SHA256 signature>
+X-TipCurrent-Event: tip.created
+X-TipCurrent-Delivery-Attempt: 1
+```
+
+**Body:**
+```json
+{
+  "id": 1,
+  "roomId": "gaming_stream_123",
+  "senderId": "alice",
+  "recipientId": "bob",
+  "amount": 100.00,
+  "message": "Great play!",
+  "metadata": "{\"type\":\"celebration\"}",
+  "createdAt": "2024-01-15T10:30:45.123Z"
+}
+```
+
+### Signature Verification
+
+TipCurrent signs webhook payloads using HMAC-SHA256 to ensure authenticity. Your endpoint should verify the signature:
+
+**Python Example:**
+```python
+import hmac
+import hashlib
+import base64
+
+def verify_signature(payload_body, signature_header, webhook_secret):
+    expected_signature = base64.b64encode(
+        hmac.new(
+            webhook_secret.encode('utf-8'),
+            payload_body.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+    ).decode('utf-8')
+
+    return hmac.compare_digest(expected_signature, signature_header)
+
+# In your webhook handler:
+signature = request.headers.get('X-TipCurrent-Signature')
+if not verify_signature(request.body, signature, YOUR_WEBHOOK_SECRET):
+    return 401  # Unauthorized
+```
+
+**Node.js Example:**
+```javascript
+const crypto = require('crypto');
+
+function verifySignature(payloadBody, signatureHeader, webhookSecret) {
+    const expectedSignature = crypto
+        .createHmac('sha256', webhookSecret)
+        .update(payloadBody)
+        .digest('base64');
+
+    return crypto.timingSafeEqual(
+        Buffer.from(expectedSignature),
+        Buffer.from(signatureHeader)
+    );
+}
+
+// In your webhook handler:
+const signature = req.headers['x-tipcurrent-signature'];
+if (!verifySignature(req.rawBody, signature, YOUR_WEBHOOK_SECRET)) {
+    res.status(401).send('Unauthorized');
+    return;
+}
+```
+
+**Java Example:**
+```java
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.Base64;
+
+public boolean verifySignature(String payload, String signature, String secret) {
+    try {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        SecretKeySpec secretKeySpec = new SecretKeySpec(
+            secret.getBytes(StandardCharsets.UTF_8),
+            "HmacSHA256"
+        );
+        mac.init(secretKeySpec);
+        byte[] hmacBytes = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+        String expectedSignature = Base64.getEncoder().encodeToString(hmacBytes);
+
+        return expectedSignature.equals(signature);
+    } catch (Exception e) {
+        return false;
+    }
+}
+```
+
+### Supported Events
+
+Currently supported events:
+- `tip.created` - Triggered when a new tip is created
+
+Future events (roadmap):
+- `tip.updated`
+- `reaction.created`
+- `milestone.reached`
+
+### Delivery Guarantees
+
+**Retry Policy:**
+- Failed deliveries are automatically retried once after 5 seconds
+- HTTP status codes 2xx are considered successful
+- All other status codes and network errors trigger retries
+
+**Timeouts:**
+- Connection timeout: 5 seconds
+- Request timeout: 10 seconds
+
+**Best Practices:**
+1. Respond quickly (< 5 seconds) to avoid timeouts
+2. Return HTTP 2xx status code to acknowledge receipt
+3. Process webhook asynchronously on your side (queue for later processing)
+4. Verify HMAC signatures to ensure authenticity
+5. Use HTTPS endpoints for security
+6. Monitor delivery logs to detect issues
+
+### Example Integration
+
+**1. Register your webhook:**
+```bash
+curl -X POST http://localhost:8080/api/webhooks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-platform.com/webhooks/tipcurrent",
+    "event": "tip.created",
+    "secret": "your-secret-key-here",
+    "description": "Main webhook endpoint"
+  }'
+```
+
+**2. Implement your webhook endpoint:**
+```python
+from flask import Flask, request
+import hmac
+import hashlib
+import base64
+
+app = Flask(__name__)
+WEBHOOK_SECRET = "your-secret-key-here"
+
+@app.route('/webhooks/tipcurrent', methods=['POST'])
+def handle_webhook():
+    # Verify signature
+    signature = request.headers.get('X-TipCurrent-Signature')
+    payload = request.get_data(as_text=True)
+
+    expected_sig = base64.b64encode(
+        hmac.new(
+            WEBHOOK_SECRET.encode('utf-8'),
+            payload.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+    ).decode('utf-8')
+
+    if not hmac.compare_digest(expected_sig, signature):
+        return 'Unauthorized', 401
+
+    # Process the tip event
+    data = request.json
+    print(f"Tip received: {data['senderId']} → {data['recipientId']}: ${data['amount']}")
+
+    # Queue for async processing, update database, send notification, etc.
+
+    return '', 200
+
+if __name__ == '__main__':
+    app.run(port=5000)
+```
+
+**3. Test your webhook:**
+```bash
+curl -X POST http://localhost:8080/api/webhooks/1/test
+```
+
+Check your endpoint logs to verify the test payload was received.
 
 ## Running Tests
 
