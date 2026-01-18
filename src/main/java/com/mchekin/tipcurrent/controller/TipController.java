@@ -1,8 +1,10 @@
 package com.mchekin.tipcurrent.controller;
 
+import com.mchekin.tipcurrent.domain.IdempotencyRecord;
 import com.mchekin.tipcurrent.domain.Tip;
 import com.mchekin.tipcurrent.dto.CreateTipRequest;
 import com.mchekin.tipcurrent.dto.TipResponse;
+import com.mchekin.tipcurrent.repository.IdempotencyRecordRepository;
 import com.mchekin.tipcurrent.repository.TipRepository;
 import com.mchekin.tipcurrent.service.WebhookService;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 @RestController
@@ -23,11 +27,27 @@ import java.util.Optional;
 public class TipController {
 
     private final TipRepository tipRepository;
+    private final IdempotencyRecordRepository idempotencyRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final WebhookService webhookService;
 
     @PostMapping
-    public ResponseEntity<TipResponse> createTip(@RequestBody CreateTipRequest request) {
+    public ResponseEntity<TipResponse> createTip(
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody CreateTipRequest request) {
+
+        // Check for existing idempotency record
+        if (idempotencyKey != null) {
+            Optional<IdempotencyRecord> existing = idempotencyRepository.findById(idempotencyKey);
+
+            if (existing.isPresent()) {
+                // Return cached result
+                Tip tip = tipRepository.findById(existing.get().getResourceId())
+                        .orElseThrow(() -> new IllegalStateException("Tip not found for idempotency key"));
+                return ResponseEntity.ok(toResponse(tip));
+            }
+        }
+
         Tip tip = Tip.builder()
                 .roomId(request.getRoomId())
                 .senderId(request.getSenderId())
@@ -39,16 +59,18 @@ public class TipController {
 
         Tip savedTip = tipRepository.save(tip);
 
-        TipResponse response = TipResponse.builder()
-                .id(savedTip.getId())
-                .roomId(savedTip.getRoomId())
-                .senderId(savedTip.getSenderId())
-                .recipientId(savedTip.getRecipientId())
-                .amount(savedTip.getAmount())
-                .message(savedTip.getMessage())
-                .metadata(savedTip.getMetadata())
-                .createdAt(savedTip.getCreatedAt())
-                .build();
+        // Save idempotency record
+        if (idempotencyKey != null) {
+            idempotencyRepository.save(IdempotencyRecord.builder()
+                    .idempotencyKey(idempotencyKey)
+                    .resourceId(savedTip.getId())
+                    .resourceType("Tip")
+                    .createdAt(Instant.now())
+                    .expiresAt(Instant.now().plus(24, ChronoUnit.HOURS))
+                    .build());
+        }
+
+        TipResponse response = toResponse(savedTip);
 
         // Broadcast tip event to WebSocket subscribers
         messagingTemplate.convertAndSend("/topic/rooms/" + savedTip.getRoomId(), response);
@@ -85,17 +107,7 @@ public class TipController {
             tips = tipRepository.findAll(pageable);
         }
 
-        Page<TipResponse> response = tips.map(tip -> TipResponse.builder()
-                .id(tip.getId())
-                .roomId(tip.getRoomId())
-                .senderId(tip.getSenderId())
-                .recipientId(tip.getRecipientId())
-                .amount(tip.getAmount())
-                .message(tip.getMessage())
-                .metadata(tip.getMetadata())
-                .createdAt(tip.getCreatedAt())
-                .build()
-        );
+        Page<TipResponse> response = tips.map(this::toResponse);
 
         return ResponseEntity.ok(response);
     }
@@ -108,17 +120,19 @@ public class TipController {
             return ResponseEntity.notFound().build();
         }
 
-        TipResponse response = TipResponse.builder()
-                .id(tip.get().getId())
-                .roomId(tip.get().getRoomId())
-                .senderId(tip.get().getSenderId())
-                .recipientId(tip.get().getRecipientId())
-                .amount(tip.get().getAmount())
-                .message(tip.get().getMessage())
-                .metadata(tip.get().getMetadata())
-                .createdAt(tip.get().getCreatedAt())
-                .build();
+        return ResponseEntity.ok(toResponse(tip.get()));
+    }
 
-        return ResponseEntity.ok(response);
+    private TipResponse toResponse(Tip tip) {
+        return TipResponse.builder()
+                .id(tip.getId())
+                .roomId(tip.getRoomId())
+                .senderId(tip.getSenderId())
+                .recipientId(tip.getRecipientId())
+                .amount(tip.getAmount())
+                .message(tip.getMessage())
+                .metadata(tip.getMetadata())
+                .createdAt(tip.getCreatedAt())
+                .build();
     }
 }
