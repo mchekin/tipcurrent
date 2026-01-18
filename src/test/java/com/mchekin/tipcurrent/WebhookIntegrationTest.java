@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -39,6 +40,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 @SpringBootTest(
         classes = TipcurrentApplication.class,
@@ -373,18 +375,21 @@ class WebhookIntegrationTest {
         restTemplate.postForEntity(createUrl("/api/tips"), tipRequest, TipResponse.class);
 
         // Wait for webhook delivery attempts (initial + 1 retry after 5s delay)
-        // Use longer timeout for CI environments which can be slower
-        Thread.sleep(12000);
+        // Use polling instead of fixed sleep - faster and more reliable
+        await()
+                .atMost(Duration.ofSeconds(15))
+                .pollInterval(Duration.ofMillis(500))
+                .untilAsserted(() -> {
+                    List<WebhookDeliveryLog> logs = deliveryLogRepository.findAll();
+                    assertThat(logs).hasSizeGreaterThanOrEqualTo(2);  // Initial + 1 retry
 
-        List<WebhookDeliveryLog> logs = deliveryLogRepository.findAll();
-        assertThat(logs).hasSizeGreaterThanOrEqualTo(1);  // At least initial attempt
-
-        // Check that all attempts failed
-        for (WebhookDeliveryLog log : logs) {
-            assertThat(log.getWebhookId()).isEqualTo(webhook.getId());
-            assertThat(log.getEvent()).isEqualTo("tip.created");
-            assertThat(log.getSuccess()).isFalse();
-        }
+                    // Check that all attempts failed
+                    for (WebhookDeliveryLog log : logs) {
+                        assertThat(log.getWebhookId()).isEqualTo(webhook.getId());
+                        assertThat(log.getEvent()).isEqualTo("tip.created");
+                        assertThat(log.getSuccess()).isFalse();
+                    }
+                });
     }
 
     @Test
