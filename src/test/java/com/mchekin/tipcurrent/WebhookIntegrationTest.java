@@ -3,8 +3,10 @@ package com.mchekin.tipcurrent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mchekin.tipcurrent.domain.Webhook;
 import com.mchekin.tipcurrent.domain.WebhookDeliveryLog;
+import com.mchekin.tipcurrent.dto.CreateReactionRequest;
 import com.mchekin.tipcurrent.dto.CreateTipRequest;
 import com.mchekin.tipcurrent.dto.CreateWebhookRequest;
+import com.mchekin.tipcurrent.dto.ReactionResponse;
 import com.mchekin.tipcurrent.dto.TipResponse;
 import com.mchekin.tipcurrent.dto.WebhookResponse;
 import com.mchekin.tipcurrent.repository.WebhookDeliveryLogRepository;
@@ -84,9 +86,13 @@ class WebhookIntegrationTest {
     private CountDownLatch webhookLatch;
 
     @BeforeEach
-    void setUp() throws IOException {
+    void setUp() throws Exception {
         webhookRepository.deleteAll();
         deliveryLogRepository.deleteAll();
+
+        // Let any in-flight async webhook deliveries from previous tests settle
+        Thread.sleep(500);
+
         receivedWebhooks.clear();
         webhookLatch = new CountDownLatch(1);
 
@@ -655,6 +661,61 @@ class WebhookIntegrationTest {
         for (WebhookResponse webhook : response.getBody()) {
             assertThat(webhook.getRoomId()).isEqualTo("room1");
         }
+    }
+
+    @Test
+    void shouldDeliverWebhookWhenReactionCreated() throws Exception {
+        String secret = "reaction-secret-key";
+        createAndSaveWebhook("room1", "http://localhost:" + mockServerPort + "/webhook", "reaction.created", secret, "Reaction webhook");
+
+        CreateReactionRequest reactionRequest = CreateReactionRequest.builder()
+                .roomId("room1")
+                .userId("alice")
+                .emoji("🔥")
+                .targetId("msg_123")
+                .build();
+
+        ResponseEntity<ReactionResponse> reactionResponse = restTemplate.postForEntity(
+                createUrl("/api/reactions"),
+                reactionRequest,
+                ReactionResponse.class
+        );
+
+        assertThat(reactionResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        boolean received = webhookLatch.await(10, TimeUnit.SECONDS);
+        assertThat(received).isTrue();
+        assertThat(receivedWebhooks).hasSize(1);
+
+        ReceivedWebhook webhook = receivedWebhooks.getFirst();
+        assertThat(webhook.event()).isEqualTo("reaction.created");
+
+        ReactionResponse deliveredReaction = objectMapper.readValue(webhook.body(), ReactionResponse.class);
+        assertThat(deliveredReaction.getRoomId()).isEqualTo("room1");
+        assertThat(deliveredReaction.getUserId()).isEqualTo("alice");
+        assertThat(deliveredReaction.getEmoji()).isEqualTo("🔥");
+        assertThat(deliveredReaction.getTargetId()).isEqualTo("msg_123");
+
+        String expectedSignature = calculateHMAC(webhook.body(), secret);
+        assertThat(webhook.signature()).isEqualTo(expectedSignature);
+    }
+
+    @Test
+    void shouldNotDeliverTipWebhookForReaction() throws Exception {
+        // Webhook registered for tip.created only
+        createAndSaveWebhook("room1", "http://localhost:" + mockServerPort + "/webhook", "tip.created", "secret", "Tip only");
+
+        CreateReactionRequest reactionRequest = CreateReactionRequest.builder()
+                .roomId("room1")
+                .userId("alice")
+                .emoji("🔥")
+                .build();
+
+        restTemplate.postForEntity(createUrl("/api/reactions"), reactionRequest, ReactionResponse.class);
+
+        boolean received = webhookLatch.await(2, TimeUnit.SECONDS);
+        assertThat(received).isFalse();
+        assertThat(receivedWebhooks).isEmpty();
     }
 
     private void createAndSaveGlobalWebhook(String url, String event, String secret, String description) {

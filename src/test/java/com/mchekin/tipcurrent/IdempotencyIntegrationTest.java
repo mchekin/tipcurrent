@@ -1,9 +1,12 @@
 package com.mchekin.tipcurrent;
 
 import com.mchekin.tipcurrent.domain.IdempotencyRecord;
+import com.mchekin.tipcurrent.dto.CreateReactionRequest;
 import com.mchekin.tipcurrent.dto.CreateTipRequest;
+import com.mchekin.tipcurrent.dto.ReactionResponse;
 import com.mchekin.tipcurrent.dto.TipResponse;
 import com.mchekin.tipcurrent.repository.IdempotencyRecordRepository;
+import com.mchekin.tipcurrent.repository.ReactionRepository;
 import com.mchekin.tipcurrent.repository.TipRepository;
 import com.mchekin.tipcurrent.scheduler.IdempotencyCleanupScheduler;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +62,9 @@ class IdempotencyIntegrationTest {
     private TipRepository tipRepository;
 
     @Autowired
+    private ReactionRepository reactionRepository;
+
+    @Autowired
     private IdempotencyRecordRepository idempotencyRepository;
 
     @Autowired
@@ -67,6 +73,7 @@ class IdempotencyIntegrationTest {
     @BeforeEach
     void setUp() {
         tipRepository.deleteAll();
+        reactionRepository.deleteAll();
         idempotencyRepository.deleteAll();
     }
 
@@ -291,6 +298,78 @@ class IdempotencyIntegrationTest {
         // Only one tip should exist
         assertThat(tipRepository.count()).isEqualTo(1);
         assertThat(idempotencyRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void shouldCreateReactionWithIdempotencyKey() {
+        String idempotencyKey = UUID.randomUUID().toString();
+        CreateReactionRequest request = CreateReactionRequest.builder()
+                .roomId("room1")
+                .userId("alice")
+                .emoji("🔥")
+                .build();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", idempotencyKey);
+
+        HttpEntity<CreateReactionRequest> entity = new HttpEntity<>(request, headers);
+
+        ResponseEntity<ReactionResponse> response = restTemplate.exchange(
+                createUrl("/api/reactions"),
+                HttpMethod.POST,
+                entity,
+                ReactionResponse.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getId()).isNotNull();
+
+        Optional<IdempotencyRecord> record = idempotencyRepository.findById(idempotencyKey);
+        assertThat(record).isPresent();
+        assertThat(record.get().getResourceId()).isEqualTo(response.getBody().getId());
+        assertThat(record.get().getResourceType()).isEqualTo("Reaction");
+    }
+
+    @Test
+    void shouldReturnSameReactionOnRetryWithSameIdempotencyKey() {
+        String idempotencyKey = UUID.randomUUID().toString();
+        CreateReactionRequest request = CreateReactionRequest.builder()
+                .roomId("room1")
+                .userId("alice")
+                .emoji("🔥")
+                .build();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", idempotencyKey);
+
+        HttpEntity<CreateReactionRequest> entity = new HttpEntity<>(request, headers);
+
+        // First request
+        ResponseEntity<ReactionResponse> response1 = restTemplate.exchange(
+                createUrl("/api/reactions"),
+                HttpMethod.POST,
+                entity,
+                ReactionResponse.class
+        );
+
+        assertThat(response1.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        Long firstId = response1.getBody().getId();
+
+        // Second request with the same idempotency key
+        ResponseEntity<ReactionResponse> response2 = restTemplate.exchange(
+                createUrl("/api/reactions"),
+                HttpMethod.POST,
+                entity,
+                ReactionResponse.class
+        );
+
+        assertThat(response2.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response2.getBody().getId()).isEqualTo(firstId);
+
+        assertThat(reactionRepository.count()).isEqualTo(1);
     }
 
     private String createUrl(String path) {
