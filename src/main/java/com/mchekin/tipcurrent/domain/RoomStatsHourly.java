@@ -39,19 +39,32 @@ public class RoomStatsHourly {
     private Instant periodEnd;
 
     @Column(nullable = false)
-    private Long totalTips;
+    @Builder.Default
+    private Long totalTips = 0L;
 
     @Column(nullable = false, precision = 19, scale = 2)
-    private BigDecimal totalAmount;
+    @Builder.Default
+    private BigDecimal totalAmount = BigDecimal.ZERO;
 
     @Column(nullable = false)
-    private Long uniqueSenders;
+    @Builder.Default
+    private Long uniqueSenders = 0L;
 
     @Column(nullable = false)
-    private Long uniqueRecipients;
+    @Builder.Default
+    private Long uniqueRecipients = 0L;
 
     @Column(nullable = false, precision = 19, scale = 2)
-    private BigDecimal averageTipAmount;
+    @Builder.Default
+    private BigDecimal averageTipAmount = BigDecimal.ZERO;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Long totalReactions = 0L;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Long uniqueReactors = 0L;
 
     @Column(nullable = false, updatable = false)
     private Instant lastAggregatedAt;

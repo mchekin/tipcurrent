@@ -61,6 +61,8 @@ public class AnalyticsController {
                 .uniqueSenders(stats.getUniqueSenders())
                 .uniqueRecipients(stats.getUniqueRecipients())
                 .averageTipAmount(stats.getAverageTipAmount())
+                .totalReactions(stats.getTotalReactions())
+                .uniqueReactors(stats.getUniqueReactors())
                 .build();
     }
 
@@ -75,10 +77,13 @@ public class AnalyticsController {
                 ? totalAmount.divide(BigDecimal.valueOf(totalTips), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
+        long totalReactions = stats.stream().mapToLong(RoomStatsHourly::getTotalReactions).sum();
+
         return RoomStatsSummary.builder()
                 .totalTips(totalTips)
                 .totalAmount(totalAmount)
                 .averageTipAmount(avgAmount)
+                .totalReactions(totalReactions)
                 .build();
     }
 }
