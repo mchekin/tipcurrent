@@ -1,0 +1,46 @@
+package com.mchekin.tipcurrent.repository;
+
+import com.mchekin.tipcurrent.domain.Reaction;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.Instant;
+import java.util.List;
+
+@Repository
+public interface ReactionRepository extends JpaRepository<Reaction, Long> {
+
+    Page<Reaction> findByRoomId(String roomId, Pageable pageable);
+
+    Page<Reaction> findByUserId(String userId, Pageable pageable);
+
+    Page<Reaction> findByRoomIdAndUserId(String roomId, String userId, Pageable pageable);
+
+    Page<Reaction> findByRoomIdAndEmoji(String roomId, String emoji, Pageable pageable);
+
+    Page<Reaction> findByTargetId(String targetId, Pageable pageable);
+
+    @Query(value = """
+        SELECT
+            room_id as roomId,
+            COUNT(*) as totalReactions,
+            COUNT(DISTINCT user_id) as uniqueUsers
+        FROM reactions
+        WHERE created_at >= :periodStart AND created_at < :periodEnd
+        GROUP BY room_id
+        """, nativeQuery = true)
+    List<ReactionStatsProjection> aggregateByRoomForPeriod(
+            @Param("periodStart") Instant periodStart,
+            @Param("periodEnd") Instant periodEnd
+    );
+
+    interface ReactionStatsProjection {
+        String getRoomId();
+        Long getTotalReactions();
+        Long getUniqueUsers();
+    }
+}

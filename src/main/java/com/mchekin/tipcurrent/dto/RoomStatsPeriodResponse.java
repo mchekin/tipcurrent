@@ -21,4 +21,6 @@ public class RoomStatsPeriodResponse {
     private Long uniqueSenders;
     private Long uniqueRecipients;
     private BigDecimal averageTipAmount;
+    private Long totalReactions;
+    private Long uniqueReactors;
 }

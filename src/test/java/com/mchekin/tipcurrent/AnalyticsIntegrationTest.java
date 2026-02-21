@@ -2,6 +2,7 @@ package com.mchekin.tipcurrent;
 
 import com.mchekin.tipcurrent.domain.RoomStatsHourly;
 import com.mchekin.tipcurrent.dto.RoomStatsResponse;
+import com.mchekin.tipcurrent.repository.ReactionRepository;
 import com.mchekin.tipcurrent.repository.RoomStatsHourlyRepository;
 import com.mchekin.tipcurrent.repository.TipRepository;
 import com.mchekin.tipcurrent.service.StatsAggregationService;
@@ -59,6 +60,9 @@ class AnalyticsIntegrationTest {
     private TipRepository tipRepository;
 
     @Autowired
+    private ReactionRepository reactionRepository;
+
+    @Autowired
     private RoomStatsHourlyRepository statsRepository;
 
     @Autowired
@@ -70,6 +74,7 @@ class AnalyticsIntegrationTest {
     @BeforeEach
     void setUp() {
         tipRepository.deleteAll();
+        reactionRepository.deleteAll();
         statsRepository.deleteAll();
     }
 
@@ -359,10 +364,98 @@ class AnalyticsIntegrationTest {
         assertThat(response.getBody().getSummary().getAverageTipAmount()).isEqualByComparingTo(new BigDecimal("200.00"));
     }
 
+    @Test
+    void shouldAggregateReactionStats() {
+        Instant hourStart = Instant.parse("2024-01-15T10:00:00Z");
+        createReactionAt("room1", "alice", "🔥", hourStart.plusSeconds(600));
+        createReactionAt("room1", "bob", "❤️", hourStart.plusSeconds(1200));
+        createReactionAt("room1", "alice", "👍", hourStart.plusSeconds(1800));
+
+        aggregationService.aggregateHourlyStats(hourStart);
+
+        List<RoomStatsHourly> stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(stats).hasSize(1);
+        assertThat(stats.getFirst().getTotalReactions()).isEqualTo(3);
+        assertThat(stats.getFirst().getUniqueReactors()).isEqualTo(2);
+        assertThat(stats.getFirst().getTotalTips()).isEqualTo(0);
+    }
+
+    @Test
+    void shouldAggregateReactionStatsInApiResponse() {
+        Instant hourStart = Instant.parse("2024-01-15T10:00:00Z");
+        createReactionAt("room1", "alice", "🔥", hourStart.plusSeconds(600));
+        createReactionAt("room1", "bob", "❤️", hourStart.plusSeconds(1200));
+
+        aggregationService.aggregateHourlyStats(hourStart);
+
+        ResponseEntity<RoomStatsResponse> response = restTemplate.getForEntity(
+                createUrl("/api/analytics/rooms/room1/stats"),
+                RoomStatsResponse.class
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getStats().getFirst().getTotalReactions()).isEqualTo(2);
+        assertThat(response.getBody().getStats().getFirst().getUniqueReactors()).isEqualTo(2);
+        assertThat(response.getBody().getSummary().getTotalReactions()).isEqualTo(2);
+    }
+
+    @Test
+    void shouldAggregateTipsAndReactionsTogether() {
+        Instant hourStart = Instant.parse("2024-01-15T10:00:00Z");
+        createTipAt("room1", "alice", "bob", new BigDecimal("100"), hourStart.plusSeconds(600));
+        createTipAt("room1", "charlie", "bob", new BigDecimal("200"), hourStart.plusSeconds(1200));
+        createReactionAt("room1", "alice", "🔥", hourStart.plusSeconds(1800));
+        createReactionAt("room1", "dave", "❤️", hourStart.plusSeconds(2400));
+        createReactionAt("room1", "dave", "👍", hourStart.plusSeconds(3000));
+
+        aggregationService.aggregateHourlyStats(hourStart);
+
+        List<RoomStatsHourly> stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(stats).hasSize(1);
+
+        RoomStatsHourly stat = stats.getFirst();
+        assertThat(stat.getTotalTips()).isEqualTo(2);
+        assertThat(stat.getTotalAmount()).isEqualByComparingTo(new BigDecimal("300"));
+        assertThat(stat.getUniqueSenders()).isEqualTo(2);
+        assertThat(stat.getTotalReactions()).isEqualTo(3);
+        assertThat(stat.getUniqueReactors()).isEqualTo(2);
+    }
+
+    @Test
+    void shouldAggregateReactionsOnlyRoomWithNoTips() {
+        Instant hourStart = Instant.parse("2024-01-15T10:00:00Z");
+        // room1 has only tips
+        createTipAt("room1", "alice", "bob", new BigDecimal("100"), hourStart.plusSeconds(600));
+        // room2 has only reactions
+        createReactionAt("room2", "charlie", "🔥", hourStart.plusSeconds(600));
+        createReactionAt("room2", "dave", "❤️", hourStart.plusSeconds(1200));
+
+        aggregationService.aggregateHourlyStats(hourStart);
+
+        List<RoomStatsHourly> room1Stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room1");
+        assertThat(room1Stats).hasSize(1);
+        assertThat(room1Stats.getFirst().getTotalTips()).isEqualTo(1);
+        assertThat(room1Stats.getFirst().getTotalReactions()).isEqualTo(0);
+
+        List<RoomStatsHourly> room2Stats = statsRepository.findByRoomIdOrderByPeriodStartAsc("room2");
+        assertThat(room2Stats).hasSize(1);
+        assertThat(room2Stats.getFirst().getTotalTips()).isEqualTo(0);
+        assertThat(room2Stats.getFirst().getTotalReactions()).isEqualTo(2);
+        assertThat(room2Stats.getFirst().getUniqueReactors()).isEqualTo(2);
+    }
+
     private void createTipAt(String roomId, String senderId, String recipientId, BigDecimal amount, Instant createdAt) {
         jdbcTemplate.update(
                 "INSERT INTO tips (room_id, sender_id, recipient_id, amount, created_at) VALUES (?, ?, ?, ?, ?)",
                 roomId, senderId, recipientId, amount, Timestamp.from(createdAt)
+        );
+    }
+
+    private void createReactionAt(String roomId, String userId, String emoji, Instant createdAt) {
+        jdbcTemplate.update(
+                "INSERT INTO reactions (room_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)",
+                roomId, userId, emoji, Timestamp.from(createdAt)
         );
     }
 
